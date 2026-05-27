@@ -35,17 +35,16 @@ jobs:
           find packs/ -maxdepth 1 -name "*.zip" | sort | while read -r pack; do
             echo "Extracting: $pack"
             
-            # Extract the MTR json safely to a holding folder first
+            # Extract the MTR json safely to a holding folder first using unzip (harmless for raw text files)
             pack_name=$(basename "$pack" .zip)
             unzip -p "$pack" "assets/mtr/mtr_custom_resources.json" > "mtr_json_holding/${pack_name}.json" 2>/dev/null || rm -f "mtr_json_holding/${pack_name}.json"
             
-            # Extract the full pack normally into the workspace
-            # -o forces overwriting
-            # -X ignores stored permission/owner metadata from the zip
-            unzip -o -X "$pack" -d extracted_workspace/
+            # Use 7z to extract the full pack. 
+            # -y automatically answers 'yes' to overwrites
+            # -o sets the output workspace directory (Note: NO space after -o)
+            7z x "$pack" -y -oextracted_workspace/
 
-            # Fail-safe: Force read/write/execute permissions back onto the workspace 
-            # so the next zip file in the loop never hits a 'Permission Denied' block
+            # Reset permissions cleanly for the next file loop
             chmod -R 755 extracted_workspace/
           done
 
