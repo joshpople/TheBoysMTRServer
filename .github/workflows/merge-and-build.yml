@@ -21,21 +21,22 @@ jobs:
         python-version: '3.x'
 
     # Step 1: Mimic the exact server pack layout the script expects
+    # (It scans server-pack/resourcepacks/ for your archives)
     - name: Prepare PackPulse Layout
       run: |
         mkdir -p server-pack/resourcepacks
         cp packs/*.zip server-pack/resourcepacks/
 
     # Step 2: Download and run the official manifest tool
-    # Using the script's strict arguments: --server-pack-dir and --base-url
+    # Using the script's exact flags: --pack-root and --output
     - name: Generate Official Manifest
       run: |
         curl -fsSL -o generate_manifest.py https://raw.githubusercontent.com/Kamilhik/PackPulseMod/main/scripts/generate_manifest.py
         
         python3 generate_manifest.py \
-          --server-pack-dir server-pack \
+          --pack-root server-pack \
           --base-url "http://148.251.140.13/resourcepacks" \
-          --output-manifest server-pack/manifest.json
+          --output server-pack/manifest.json
 
     # Step 3: Copy the individual zips and verified manifest out to Nginx
     - name: Copy packs and manifest to web server
@@ -47,4 +48,4 @@ jobs:
         port: 22
         source: "server-pack/resourcepacks/*.zip,server-pack/manifest.json"
         target: "/var/www/html/resourcepacks"
-        strip_components: 1 # Drops the 'server-pack/' wrapper folder so they land clean
+        strip_components: 1
