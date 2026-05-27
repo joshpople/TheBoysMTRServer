@@ -21,6 +21,7 @@ jobs:
       run: |
         mkdir -p extracted
         mkdir -p mtr_json
+        mkdir -p valid_mtr_json
         
         for file in packs/*.zip; do
           if [ -f "$file" ]; then
@@ -35,16 +36,27 @@ jobs:
           fi
         done
 
-        # Insulated JQ merge block to ignore structural syntax errors inside vehicle configs
-        if [ "$(ls -A mtr_json/*.json 2>/dev/null)" ]; then
+        # Validate each JSON configuration file individually before merging
+        for json_file in mtr_json/*.json; do
+          if [ -f "$json_file" ]; then
+            if jq . "$json_file" >/dev/null 2>&1; then
+              cp "$json_file" valid_mtr_json/
+            else
+              echo "⚠️ WARNING: Syntax error detected inside $(basename "$json_file")! Skipping this configuration to prevent a crash."
+            fi
+          fi
+        done
+
+        # Clean merge step utilizing only structurally sound files
+        if [ "$(ls -A valid_mtr_json/*.json 2>/dev/null)" ]; then
           mkdir -p extracted/assets/mtr/
-          jq -cn 'reduce (inputs | select(type == "object")) as $item ({}; . * $item)' mtr_json/*.json > extracted/assets/mtr/mtr_custom_resources.json
+          jq -s 'reduce .[] as $item ({}; . * $item)' valid_mtr_json/*.json > extracted/assets/mtr/mtr_custom_resources.json
         fi
 
         cd extracted
         7z a -tzip ../resourcepack.zip *
         cd ..
-        rm -rf extracted mtr_json
+        rm -rf extracted mtr_json valid_mtr_json
 
     - name: Get resourcepack sha256
       id: hash
