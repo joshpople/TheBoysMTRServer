@@ -1,4 +1,4 @@
-name: Deploy Resource Packs to PackPulse
+name: Deploy Individual Resource Packs to PackPulse
 
 on:
   push:
@@ -15,18 +15,18 @@ jobs:
     - name: Checkout LFS objects explicit pull
       run: git lfs pull
 
-    # Step 1: Send the exact individual pack zips straight to your web server
+    # Step 1: Send the exact individual pack zips straight to your Nginx folder
     - name: Copy packs to web server
       uses: appleboy/scp-action@v0.1.7
       with:
         host: ${{ secrets.SERVER_IP }}
         username: ${{ secrets.SERVER_USER }}
-        key: ${{ secrets.SSH_KEY }}
+        key: ${{ secrets.SERVER_SSH_KEY }}
         port: 22
         source: "packs/*.zip"
         target: "/var/www/html/resourcepacks"
 
-    # Step 2: Dynamically build the manifest listing every single pack automatically
+    # Step 2: Dynamically build the manifest listing every single pack on the host
     - name: Generate PackPulse Manifest
       uses: appleboy/ssh-action@v1.0.3
       with:
@@ -36,31 +36,31 @@ jobs:
         port: 22
         script: |
           WEB_DIR="/var/www/html/resourcepacks"
-          MANIFEST="\$WEB_DIR/manifest.json"
+          MANIFEST="$WEB_DIR/manifest.json"
           
-          # Start writing the JSON file
-          echo '{ "resourcepacks": [' > \$MANIFEST
+          # Start writing the JSON file structure
+          echo '{ "resourcepacks": [' > $MANIFEST
           
           first=true
-          for file in \$WEB_DIR/packs/*.zip; do
-            if [ -f "\$file" ]; then
-              filename=\$(basename "\$file")
+          for file in $WEB_DIR/packs/*.zip; do
+            if [ -f "$file" ]; then
+              filename=$(basename "$file")
               # Calculate the SHA-256 hash of this specific individual pack
-              hash=\$(sha256sum "\$file" | awk '{print \$1}')
+              hash=$(sha256sum "$file" | awk '{print $1}')
               
-              if [ "\$first" = true ]; then
+              if [ "$first" = true ]; then
                 first=false
               else
-                echo "," >> \$MANIFEST
+                echo "," >> $MANIFEST
               fi
               
-              # Append this specific pack to the PackPulse list
-              cat <<EOF >> \$MANIFEST
+              # Append this specific pack to the PackPulse array
+              cat <<EOF >> $MANIFEST
                 {
-                  "name": "\${filename%.*}",
-                  "path": "resourcepacks/packs/\$filename",
-                  "url": "http://148.251.140.13/resourcepacks/packs/\$filename",
-                  "hash": "\$hash",
+                  "name": "${filename%.*}",
+                  "path": "resourcepacks/packs/$filename",
+                  "url": "http://148.251.140.13/resourcepacks/packs/$filename",
+                  "hash": "$hash",
                   "required": true
                 }
           EOF
@@ -68,5 +68,5 @@ jobs:
           done
           
           # Close the JSON file structure
-          echo '] }' >> \$MANIFEST
+          echo '] }' >> $MANIFEST
           echo "✅ PackPulse manifest.json built dynamically with all individual packs!"
