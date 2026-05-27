@@ -10,7 +10,6 @@ jobs:
     outputs:
       sha256: ${{ steps.hash.outputs.sha256 }}
     steps:
-    # This block is updated to explicitly pull the real, heavy LFS files
     - uses: actions/checkout@v3
       with:
         lfs: true
@@ -36,9 +35,10 @@ jobs:
           fi
         done
 
+        # Insulated JQ merge block to ignore structural syntax errors inside vehicle configs
         if [ "$(ls -A mtr_json/*.json 2>/dev/null)" ]; then
           mkdir -p extracted/assets/mtr/
-          jq -s 'reduce .[] as $item ({}; . * $item)' mtr_json/*.json > extracted/assets/mtr/mtr_custom_resources.json
+          jq -cn 'reduce (inputs | select(type == "object")) as $item ({}; . * $item)' mtr_json/*.json > extracted/assets/mtr/mtr_custom_resources.json
         fi
 
         cd extracted
@@ -62,7 +62,6 @@ jobs:
     needs: build-and-compile
     runs-on: ubuntu-latest
     strategy:
-      # This allows both channels to run at the exact same moment without waiting for each other
       fail-fast: false
       matrix:
         destination: [ "webserver", "gameserver" ]
