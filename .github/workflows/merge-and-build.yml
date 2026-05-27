@@ -5,11 +5,18 @@ on:
     branches: [ "main" ]
 
 jobs:
-  build:
+  build-and-compile:
     runs-on: ubuntu-latest
-
+    outputs:
+      sha256: ${{ steps.hash.outputs.sha256 }}
     steps:
+    # This block is updated to explicitly pull the real, heavy LFS files
     - uses: actions/checkout@v3
+      with:
+        lfs: true
+
+    - name: Checkout LFS objects explicit pull
+      run: git lfs pull
 
     - name: Combine packs
       run: |
@@ -19,8 +26,13 @@ jobs:
         for file in packs/*.zip; do
           if [ -f "$file" ]; then
             pack_name=$(basename "$file" .zip)
-            unzip -p "$file" "assets/mtr/mtr_custom_resources.json" > "mtr_json/${pack_name}.json" 2>/dev/null || rm -f "mtr_json/${pack_name}.json"
-            7z x "$file" -y -oextracted/
+            
+            if 7z t "$file" >/dev/null 2>&1; then
+              unzip -p "$file" "assets/mtr/mtr_custom_resources.json" > "mtr_json/${pack_name}.json" 2>/dev/null || rm -f "mtr_json/${pack_name}.json"
+              7z x "$file" -y -oextracted/
+            else
+              echo "⚠️ WARNING: Skipping '$file' because it is corrupted or not a real zip archive."
+            fi
           fi
         done
 
@@ -34,13 +46,34 @@ jobs:
         cd ..
         rm -rf extracted mtr_json
 
-    - name: Get resourcepack sha256 (Required by PackPulse)
+    - name: Get resourcepack sha256
       id: hash
       run: |
-        # PackPulse uses SHA-256 instead of SHA-1 for security checking
         echo "sha256=$(sha256sum resourcepack.zip | awk '{print $1}')" >> $GITHUB_OUTPUT
 
+    - name: Upload Artifact for Parallel Deployment
+      uses: actions/upload-artifact@v4
+      with:
+        name: compiled-resourcepack
+        path: resourcepack.zip
+        retention-days: 1
+
+  parallel-deploy:
+    needs: build-and-compile
+    runs-on: ubuntu-latest
+    strategy:
+      parallel: true
+      matrix:
+        destination: [ "webserver", "gameserver" ]
+    
+    steps:
+    - name: Download Compiled Pack
+      uses: actions/download-artifact@v4
+      with:
+        name: compiled-resourcepack
+
     - name: Copy pack to web server
+      if: matrix.destination == 'webserver'
       uses: appleboy/scp-action@v0.1.7
       with:
         host: ${{ secrets.SERVER_IP }}
@@ -50,7 +83,22 @@ jobs:
         source: "resourcepack.zip"
         target: "/var/www/html/resourcepacks"
 
-    - name: Generate PackPulse Manifest and Update Server
+    - name: Copy pack to server volume
+      if: matrix.destination == 'gameserver'
+      uses: appleboy/scp-action@v0.1.7
+      with:
+        host: ${{ secrets.SERVER_IP }}
+        username: ${{ secrets.SERVER_USER }}
+        key: ${{ secrets.SSH_KEY }}
+        port: 22
+        source: "resourcepack.zip"
+        target: "/var/lib/pelican/volumes/${{ secrets.PELICAN_SERVER_ID }}"
+
+  generate-manifest:
+    needs: [ build-and-compile, parallel-deploy ]
+    runs-on: ubuntu-latest
+    steps:
+    - name: Generate PackPulse Manifest
       uses: appleboy/ssh-action@v1.0.3
       with:
         host: ${{ secrets.SERVER_IP }}
@@ -60,7 +108,6 @@ jobs:
         script: |
           WEB_DIR="/var/www/html/resourcepacks"
           
-          # Generate the precise format expected by PackPulse
           cat <<EOF > \$WEB_DIR/manifest.json
           {
             "resourcepacks": [
@@ -68,20 +115,10 @@ jobs:
                 "name": "The Boys MTR Server Assets",
                 "path": "resourcepacks/resourcepack.zip",
                 "url": "http://148.251.140.13/resourcepacks/resourcepack.zip",
-                "hash": "${{ steps.hash.outputs.sha256 }}",
+                "hash": "${{ needs.build-and-compile.outputs.sha256 }}",
                 "required": true
               }
             ]
           }
           EOF
           echo "✅ Official manifest.json successfully generated for PackPulse!"
-
-    - name: Copy pack to server volume
-      uses: appleboy/scp-action@v0.1.7
-      with:
-        host: ${{ secrets.SERVER_IP }}
-        username: ${{ secrets.SERVER_USER }}
-        key: ${{ secrets.SSH_KEY }}
-        port: 22
-        source: "resourcepack.zip"
-        target: "/var/lib/pelican/volumes/${{ secrets.PELICAN_SERVER_ID }}"
