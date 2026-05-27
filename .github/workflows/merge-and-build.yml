@@ -1,4 +1,4 @@
-name: Deploy Individual Resource Packs to PackPulse
+name: Deploy Resource Packs via Official PackPulse Script
 
 on:
   push:
@@ -15,58 +15,36 @@ jobs:
     - name: Checkout LFS objects explicit pull
       run: git lfs pull
 
-    # Step 1: Send the exact individual pack zips straight to your Nginx folder
-    - name: Copy packs to web server
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.x'
+
+    # Step 1: Mimic the exact server pack layout the script expects
+    - name: Prepare PackPulse Layout
+      run: |
+        mkdir -p server-pack/resourcepacks
+        cp packs/*.zip server-pack/resourcepacks/
+
+    # Step 2: Download and run the official manifest tool
+    # Using the script's strict arguments: --server-pack-dir and --base-url
+    - name: Generate Official Manifest
+      run: |
+        curl -fsSL -o generate_manifest.py https://raw.githubusercontent.com/Kamilhik/PackPulseMod/main/scripts/generate_manifest.py
+        
+        python3 generate_manifest.py \
+          --server-pack-dir server-pack \
+          --base-url "http://148.251.140.13/resourcepacks" \
+          --output-manifest server-pack/manifest.json
+
+    # Step 3: Copy the individual zips and verified manifest out to Nginx
+    - name: Copy packs and manifest to web server
       uses: appleboy/scp-action@v0.1.7
       with:
         host: ${{ secrets.SERVER_HOST }}
         username: ${{ secrets.SERVER_USER }}
         key: ${{ secrets.SERVER_SSH_KEY }}
         port: 22
-        source: "packs/*.zip"
+        source: "server-pack/resourcepacks/*.zip,server-pack/manifest.json"
         target: "/var/www/html/resourcepacks"
-
-    # Step 2: Dynamically build the manifest listing every single pack on the host
-    - name: Generate PackPulse Manifest
-      uses: appleboy/ssh-action@v1.0.3
-      with:
-        host: ${{ secrets.SERVER_HOST }}
-        username: ${{ secrets.SERVER_USER }}
-        key: ${{ secrets.SERVER_SSH_KEY }}
-        port: 22
-        script: |
-          WEB_DIR="/var/www/html/resourcepacks"
-          MANIFEST="$WEB_DIR/manifest.json"
-          
-          # Start writing the JSON file structure
-          echo '{ "resourcepacks": [' > $MANIFEST
-          
-          first=true
-          for file in $WEB_DIR/packs/*.zip; do
-            if [ -f "$file" ]; then
-              filename=$(basename "$file")
-              # Calculate the SHA-256 hash of this specific individual pack
-              hash=$(sha256sum "$file" | awk '{print $1}')
-              
-              if [ "$first" = true ]; then
-                first=false
-              else
-                echo "," >> $MANIFEST
-              fi
-              
-              # Append this specific pack to the PackPulse array
-              cat <<EOF >> $MANIFEST
-                {
-                  "name": "${filename%.*}",
-                  "path": "resourcepacks/packs/$filename",
-                  "url": "http://148.251.140.13/resourcepacks/packs/$filename",
-                  "hash": "$hash",
-                  "required": true
-                }
-          EOF
-            fi
-          done
-          
-          # Close the JSON file structure
-          echo '] }' >> $MANIFEST
-          echo "✅ PackPulse manifest.json built dynamically with all individual packs!"
+        strip_components: 1 # Drops the 'server-pack/' wrapper folder so they land clean
