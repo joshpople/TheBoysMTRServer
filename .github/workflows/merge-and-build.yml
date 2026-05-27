@@ -1,0 +1,64 @@
+name: Merge Resource Packs and Hash
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  merge-packs:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Install Utilities
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y unzip zip coreutils
+
+      - name: Extract and Merge Packs
+        run: |
+          echo "Creating workspace directories..."
+          mkdir -p extracted_workspace
+          
+          # Check if the packs directory exists and has zip files
+          if [ ! -d "packs" ] || [ -z "$(ls -A packs/*.zip 2>/dev/null)" ]; then
+            echo "❌ Error: No zip files found in the 'packs/' directory!"
+            exit 1
+          fi
+
+          # Loop through zip files alphabetically. 
+          # Sorted order means later files overwrite earlier files (Highest number = Highest priority)
+          for pack in $(ls packs/*.zip | sort); do
+            echo "Extracting and layering: $pack"
+            # -o forces overwriting of duplicate files/textures from previous packs
+            unzip -o "$pack" -d extracted_workspace/
+          done
+
+      - name: Compile Unified Resource Pack
+        run: |
+          echo "Zipping the merged workspace..."
+          cd extracted_workspace
+          # Zip everything in the workspace into the root resourcepack.zip
+          zip -r ../resourcepack.zip .
+          cd ..
+
+      - name: Generate SHA-1 Hash
+        id: generate_hash
+        run: |
+          HASH=$(sha1sum resourcepack.zip | awk '{print $1}')
+          echo "Generated Merged SHA-1: $HASH"
+          echo "$HASH" > resourcepack.zip.sha1
+          echo "pack_hash=$HASH" >> $GITHUB_OUTPUT
+
+      - name: Upload Merged Build Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: merged-resource-pack
+          path: |
+            resourcepack.zip
+            resourcepack.zip.sha1
+          retention-days: 7
