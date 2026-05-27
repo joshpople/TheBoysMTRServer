@@ -62,7 +62,8 @@ jobs:
     needs: build-and-compile
     runs-on: ubuntu-latest
     strategy:
-      parallel: true
+      # This allows both channels to run at the exact same moment without waiting for each other
+      fail-fast: false
       matrix:
         destination: [ "webserver", "gameserver" ]
     
