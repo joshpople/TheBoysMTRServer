@@ -1,14 +1,12 @@
-name: Merge & Build Resource Pack
+name: Deploy Resource Packs to PackPulse
 
 on:
   push:
     branches: [ "main" ]
 
 jobs:
-  build-and-compile:
+  deploy:
     runs-on: ubuntu-latest
-    outputs:
-      sha256: ${{ steps.hash.outputs.sha256 }}
     steps:
     - uses: actions/checkout@v3
       with:
@@ -17,99 +15,18 @@ jobs:
     - name: Checkout LFS objects explicit pull
       run: git lfs pull
 
-    - name: Combine packs
-      run: |
-        mkdir -p extracted
-        mkdir -p mtr_json
-        mkdir -p valid_mtr_json
-        
-        for file in packs/*.zip; do
-          if [ -f "$file" ]; then
-            pack_name=$(basename "$file" .zip)
-            
-            if 7z t "$file" >/dev/null 2>&1; then
-              unzip -p "$file" "assets/mtr/mtr_custom_resources.json" > "mtr_json/${pack_name}.json" 2>/dev/null || rm -f "mtr_json/${pack_name}.json"
-              7z x "$file" -y -oextracted/
-            else
-              echo "⚠️ WARNING: Skipping '$file' because it is corrupted or not a real zip archive."
-            fi
-          fi
-        done
-
-        # Validate each JSON configuration file individually before merging
-        for json_file in mtr_json/*.json; do
-          if [ -f "$json_file" ]; then
-            if jq . "$json_file" >/dev/null 2>&1; then
-              cp "$json_file" valid_mtr_json/
-            else
-              echo "⚠️ WARNING: Syntax error detected inside $(basename "$json_file")! Skipping this configuration to prevent a crash."
-            fi
-          fi
-        done
-
-        # Clean merge step utilizing only structurally sound files
-        if [ "$(ls -A valid_mtr_json/*.json 2>/dev/null)" ]; then
-          mkdir -p extracted/assets/mtr/
-          jq -s 'reduce .[] as $item ({}; . * $item)' valid_mtr_json/*.json > extracted/assets/mtr/mtr_custom_resources.json
-        fi
-
-        cd extracted
-        7z a -tzip ../resourcepack.zip *
-        cd ..
-        rm -rf extracted mtr_json valid_mtr_json
-
-    - name: Get resourcepack sha256
-      id: hash
-      run: |
-        echo "sha256=$(sha256sum resourcepack.zip | awk '{print $1}')" >> $GITHUB_OUTPUT
-
-    - name: Upload Artifact for Parallel Deployment
-      uses: actions/upload-artifact@v4
-      with:
-        name: compiled-resourcepack
-        path: resourcepack.zip
-        retention-days: 1
-
-  parallel-deploy:
-    needs: build-and-compile
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        destination: [ "webserver", "gameserver" ]
-    
-    steps:
-    - name: Download Compiled Pack
-      uses: actions/download-artifact@v4
-      with:
-        name: compiled-resourcepack
-
-    - name: Copy pack to web server
-      if: matrix.destination == 'webserver'
+    # Step 1: Send the exact individual pack zips straight to your web server
+    - name: Copy packs to web server
       uses: appleboy/scp-action@v0.1.7
       with:
         host: ${{ secrets.SERVER_IP }}
         username: ${{ secrets.SERVER_USER }}
         key: ${{ secrets.SSH_KEY }}
         port: 22
-        source: "resourcepack.zip"
+        source: "packs/*.zip"
         target: "/var/www/html/resourcepacks"
 
-    - name: Copy pack to server volume
-      if: matrix.destination == 'gameserver'
-      uses: appleboy/scp-action@v0.1.7
-      with:
-        host: ${{ secrets.SERVER_IP }}
-        username: ${{ secrets.SERVER_USER }}
-        key: ${{ secrets.SSH_KEY }}
-        port: 22
-        source: "resourcepack.zip"
-        target: "/var/lib/pelican/volumes/${{ secrets.PELICAN_SERVER_ID }}"
-
-  generate-manifest:
-    needs: [ build-and-compile, parallel-deploy ]
-    runs-on: ubuntu-latest
-    steps:
+    # Step 2: Dynamically build the manifest listing every single pack automatically
     - name: Generate PackPulse Manifest
       uses: appleboy/ssh-action@v1.0.3
       with:
@@ -119,18 +36,37 @@ jobs:
         port: 22
         script: |
           WEB_DIR="/var/www/html/resourcepacks"
+          MANIFEST="\$WEB_DIR/manifest.json"
           
-          cat <<EOF > \$WEB_DIR/manifest.json
-          {
-            "resourcepacks": [
-              {
-                "name": "The Boys MTR Server Assets",
-                "path": "resourcepacks/resourcepack.zip",
-                "url": "http://148.251.140.13/resourcepacks/resourcepack.zip",
-                "hash": "${{ needs.build-and-compile.outputs.sha256 }}",
-                "required": true
-              }
-            ]
-          }
+          # Start writing the JSON file
+          echo '{ "resourcepacks": [' > \$MANIFEST
+          
+          first=true
+          for file in \$WEB_DIR/packs/*.zip; do
+            if [ -f "\$file" ]; then
+              filename=\$(basename "\$file")
+              # Calculate the SHA-256 hash of this specific individual pack
+              hash=\$(sha256sum "\$file" | awk '{print \$1}')
+              
+              if [ "\$first" = true ]; then
+                first=false
+              else
+                echo "," >> \$MANIFEST
+              fi
+              
+              # Append this specific pack to the PackPulse list
+              cat <<EOF >> \$MANIFEST
+                {
+                  "name": "\${filename%.*}",
+                  "path": "resourcepacks/packs/\$filename",
+                  "url": "http://148.251.140.13/resourcepacks/packs/\$filename",
+                  "hash": "\$hash",
+                  "required": true
+                }
           EOF
-          echo "✅ Official manifest.json successfully generated for PackPulse!"
+            fi
+          done
+          
+          # Close the JSON file structure
+          echo '] }' >> \$MANIFEST
+          echo "✅ PackPulse manifest.json built dynamically with all individual packs!"
