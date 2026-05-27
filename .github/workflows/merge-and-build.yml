@@ -20,15 +20,40 @@ jobs:
       with:
         python-version: '3.x'
 
-    # Step 1: Mimic the exact server pack layout the script expects
-    # (It scans server-pack/resourcepacks/ for your archives)
-    - name: Prepare PackPulse Layout
+    # Step 1: Stage the files and dynamically generate options.txt based on current directory contents
+    - name: Prepare PackPulse Layout & Build options.txt
       run: |
         mkdir -p server-pack/resourcepacks
         cp packs/*.zip server-pack/resourcepacks/
+        
+        # Build the resource pack activation strings dynamically
+        # Start with the baseline vanilla and loader profiles
+        active_packs='["vanilla","fabric"'
+        incompatible_packs='["jei","worldedit","xaerolib","xaerominimap","yet_another_config_lib_v3"'
+        
+        # Loop through every pack file and convert actual spaces into \u0020 unicode strings
+        for file in packs/*.zip; do
+          if [ -f "$file" ]; then
+            filename=$(basename "$file")
+            # Replace literal spaces with the escaped \u0020 string Minecraft reads
+            escaped_name=$(echo "$filename" | sed 's/ /\\u0020/g')
+            
+            active_packs="${active_packs},\"file/${escaped_name}\""
+            incompatible_packs="${incompatible_packs},\"file/${escaped_name}\""
+          fi
+        done
+        
+        # Close out the file brackets
+        active_packs="${active_packs}]"
+        incompatible_packs="${incompatible_packs}]"
+        
+        # Save them out into a clean options.txt file inside our staging directory
+        echo "resourcePacks:${active_packs}" > server-pack/options.txt
+        echo "incompatibleResourcePacks:${incompatible_packs}" >> server-pack/options.txt
+        
+        echo "✅ Dynamically compiled options.txt file for current repository inventory!"
 
     # Step 2: Download and run the official manifest tool
-    # Using the script's exact flags: --pack-root and --output
     - name: Generate Official Manifest
       run: |
         curl -fsSL -o generate_manifest.py https://raw.githubusercontent.com/Kamilhik/PackPulseMod/main/scripts/generate_manifest.py
@@ -38,7 +63,7 @@ jobs:
           --base-url "http://148.251.140.13/resourcepacks" \
           --output server-pack/manifest.json
 
-    # Step 3: Copy the individual zips and verified manifest out to Nginx
+    # Step 3: Copy individual zips, dynamic configurations, and manifest out to Nginx
     - name: Copy packs and manifest to web server
       uses: appleboy/scp-action@v0.1.7
       with:
@@ -46,6 +71,6 @@ jobs:
         username: ${{ secrets.SERVER_USER }}
         key: ${{ secrets.SERVER_SSH_KEY }}
         port: 22
-        source: "server-pack/resourcepacks/*.zip,server-pack/manifest.json"
+        source: "server-pack/resourcepacks/*.zip,server-pack/options.txt,server-pack/manifest.json"
         target: "/var/www/html/resourcepacks"
         strip_components: 1
