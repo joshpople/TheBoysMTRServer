@@ -7,6 +7,8 @@ on:
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    env:
+      RESOURCEPACK_BASE_URL: http://${{ secrets.SERVER_HOST }}/resourcepacks
     steps:
     - uses: actions/checkout@v3
       with:
@@ -60,7 +62,7 @@ jobs:
         
         python3 generate_manifest.py \
           --pack-root server-pack \
-          --base-url "http://148.251.140.13/resourcepacks" \
+          --base-url "$RESOURCEPACK_BASE_URL" \
           --output server-pack/manifest.json
 
     # Step 3: Copy individual zips, dynamic configurations, and manifest out to Nginx
