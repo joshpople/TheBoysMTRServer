@@ -12,4 +12,4 @@ The GitHub Action deploys using these repository secrets:
 
 The manifest URL is now generated from `SERVER_HOST` as:
 
-`http://<SERVER_HOST>/resourcepacks`
+`http://<SERVER_HOST>`

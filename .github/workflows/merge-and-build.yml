@@ -8,7 +8,7 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     env:
-      RESOURCEPACK_BASE_URL: http://${{ secrets.SERVER_HOST }}/resourcepacks
+      RESOURCEPACK_BASE_URL: http://${{ secrets.SERVER_HOST }}
     steps:
     - uses: actions/checkout@v3
       with:
